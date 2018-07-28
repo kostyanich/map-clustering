@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        #map {
+            width: 1600px;
+            height: 800px;
+        }
+    </style>
+</head>
+<body>
+<h3>Stations Maps Demo</h3>
+<div id="map"></div>
+
+<script>
+    let map;
+    let view;
+    let timeout;
+
+    class MarkerIndex {
+        constructor() {
+            this.latIndex = {};
+        }
+
+        add(station, marker) {
+            const lngIndex = this.getOrCreate(this.latIndex, station.latitude);
+            const countIndex = this.getOrCreate(lngIndex, station.longitude);
+            if (!countIndex[station.count]) {
+                countIndex[station.count] = marker;
+            }
+        }
+
+        get(station) {
+            const lngIndex = this.getOrCreate(this.latIndex, station.latitude);
+            const countIndex = this.getOrCreate(lngIndex, station.longitude);
+            return countIndex[station.count];
+        }
+
+        exists(station) {
+            const lngIndex = this.getOrCreate(this.latIndex, station.latitude);
+            const countIndex = this.getOrCreate(lngIndex, station.longitude);
+            return countIndex[station.count] != null;
+        }
+
+        getOrCreate(index, value) {
+            if (!index[value]) {
+                index[value] = {};
+            }
+            return index[value];
+        }
+
+        remove(station) {
+            const lngIndex = this.getOrCreate(this.latIndex, station.latitude);
+            const countIndex = this.getOrCreate(lngIndex, station.longitude);
+            if (countIndex[station.count]) {
+                countIndex[station.count] = null;
+            }
+        }
+    }
+
+    class View {
+        constructor(map) {
+            this.markerIndex = new MarkerIndex();
+            this.stations = [];
+            this.map = map;
+        }
+
+        refreshMarkers(freshStations) {
+            const updatedMarkerIndex = new MarkerIndex();
+            const updatedStations = [];
+            freshStations.forEach(station => {
+                if (this.markerIndex.exists(station)) {
+                    this.moveExisting(station, updatedStations, updatedMarkerIndex);
+                } else {
+                    this.createNew(station, updatedStations, updatedMarkerIndex);
+                }
+            });
+            this.deleteNotIndexed();
+
+            this.stations = updatedStations;
+            this.markerIndex = updatedMarkerIndex;
+        }
+
+        deleteNotIndexed() {
+            this.stations.forEach(station => {
+                if (this.markerIndex.exists(station)) {
+                    this.markerIndex.get(station).setMap(null);
+                }
+            });
+        }
+
+        createNew(station, updatedStations, updatedMarkerIndex) {
+            const lat = station.latitude;
+            const lng = station.longitude;
+
+            const myLatLng = new google.maps.LatLng(lat, lng);
+            const marker = new google.maps.Marker({
+                position: myLatLng,
+                map: this.map,
+                label: `${station['count']}`,
+                animation: google.maps.Animation.NONE,
+                title: `${station['count']}`,
+                zIndex: 0
+            });
+            updatedStations.push(station);
+            updatedMarkerIndex.add(station, marker);
+        }
+
+        moveExisting(station, updatedStations, updatedMarkerIndex) {
+            updatedStations.push(station);
+            updatedMarkerIndex.add(station, this.markerIndex.get(station));
+            this.markerIndex.remove(station);
+        }
+    }
+
+    function loadMarkers() {
+
+        const bounds =  map.getBounds();
+        const zoomLevel = map.getZoom();
+        const ne = bounds.getNorthEast();
+        const sw = bounds.getSouthWest();
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `http://localhost:8080/map`, true);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onload = () => view.refreshMarkers(JSON.parse(xhr.response));
+        const url = new URL(window.location.href);
+        const treeTypeParam = url.searchParams.get("treeType");
+        const treeType = !treeTypeParam ? "QuadTreeType" : treeTypeParam;
+        xhr.send(`{ "zoomLevel":${zoomLevel}, "neLat": ${ne.lat()}, "neLng": ${ne.lng()}, "swLat": ${sw.lat()}, "swLng": ${sw.lng()}, "treeType": "${treeType}" }`);
+    }
+
+    function initialize() {
+
+        const mapOptions = {
+            zoom: 0,
+            center: new google.maps.LatLng(52.3, 4.8)
+        };
+
+        map = new google.maps.Map(document.getElementById('map'), mapOptions);
+        view = new View(map);
+
+        map.addListener('zoom_changed', () => {
+            window.clearTimeout(timeout);
+            loadMarkers()
+        });
+
+        map.addListener('bounds_changed', () => {
+            window.clearTimeout(timeout);
+            timeout = window.setTimeout(() => loadMarkers(), 300);
+        });
+
+        timeout = window.setTimeout(() => loadMarkers(), 300);
+    }
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?callback=initialize"></script>
+</body>
+</html>
